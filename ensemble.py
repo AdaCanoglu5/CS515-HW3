@@ -65,7 +65,7 @@ def load_vgg16(num_classes=10):
 
 
 # ── Fine-tuning ────────────────────────────────────────────────────────────────
-def fine_tune(model, model_name, epochs=5):
+def fine_tune(model, model_name, epochs=10):
     """Fine-tune a model on CIFAR-10 and save the best weights."""
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-4)
@@ -170,10 +170,10 @@ if __name__ == "__main__":
     mobilenet = load_mobilenet_v2()
     vgg       = load_vgg16()
 
-    # 2. Fine-tune each for 5 epochs
-    resnet    = fine_tune(resnet,    "resnet18",     epochs=5)
-    mobilenet = fine_tune(mobilenet, "mobilenet_v2", epochs=5)
-    vgg       = fine_tune(vgg,       "vgg16",        epochs=5)
+    # 2. Fine-tune each for 10 epochs
+    resnet    = fine_tune(resnet,    "resnet18",     epochs=10)
+    mobilenet = fine_tune(mobilenet, "mobilenet_v2", epochs=10)
+    vgg       = fine_tune(vgg,       "vgg16",        epochs=10)
 
     # 3. Individual accuracy after fine-tuning
     print("\nIndividual model accuracies (after fine-tuning):")
@@ -186,3 +186,43 @@ if __name__ == "__main__":
     print("\nEnsemble accuracies:")
     print(f"  Soft voting : {evaluate(ensemble, test_loader, strategy='soft'):.4f}")
     print(f"  Hard voting : {evaluate(ensemble, test_loader, strategy='hard'):.4f}")
+
+
+    """
+Soft vs Hard Voting
+--------------------
+Soft voting averages the full probability distributions across models.
+Hard voting lets each model cast a single vote for its top-1 class.
+
+They produce the same result most of the time, but diverge when:
+some models are weakly confident in one direction, and one model
+is strongly confident in another direction.
+
+Case 1: Soft voting CORRECT, Hard voting WRONG
+    True label = dog
+
+               cat   dog   bird
+    ResNet   : [0.36, 0.34, 0.30]  -> votes cat (barely)
+    MobileNet: [0.36, 0.34, 0.30]  -> votes cat (barely)
+    VGG      : [0.05, 0.90, 0.05]  -> votes dog (confidently)
+
+    Hard voting: cat (2 vs 1)          WRONG  -- two uncertain models outvote one confident model
+    Soft voting: dog (0.527 vs 0.257)  RIGHT  -- VGG's confidence shifts the average
+
+Case 2: Hard voting CORRECT, Soft voting WRONG
+    True label = cat
+
+               cat   dog   bird
+    ResNet   : [0.40, 0.35, 0.25]  -> votes cat (barely)
+    MobileNet: [0.40, 0.35, 0.25]  -> votes cat (barely)
+    VGG      : [0.05, 0.90, 0.05]  -> votes dog (confidently)
+
+    Hard voting: cat (2 vs 1)          RIGHT  -- two correct models outvote one wrong model
+    Soft voting: dog (0.533 vs 0.283)  WRONG  -- VGG's wrong confidence drags the average
+
+Takeaway:
+    Soft voting is generally preferred because well-trained models tend to be
+    confident when they are right more often than when they are wrong.
+    However, a single overconfident wrong model can still hurt soft voting,
+    while hard voting is immune to confidence levels entirely.
+"""

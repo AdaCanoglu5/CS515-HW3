@@ -24,6 +24,13 @@ import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from datasets import load_dataset
+import ssl
+from huggingface_hub import login
+import os
+
+
+# Fix for macOS SSL certificate verification error when downloading
+ssl._create_default_https_context = ssl._create_unverified_context
 
 
 # ── Core ──────────────────────────────────────────────────────────────────────
@@ -71,7 +78,8 @@ def denorm(t):
     return np.clip(t.permute(1,2,0).numpy(), 0, 1)
 
 def get_diverse_samples(n):
-    ds = load_dataset("zh-plus/tiny-imagenet", split="valid", streaming=True)
+    ds = load_dataset("ILSVRC/imagenet-1k", split="validation", streaming=True, trust_remote_code=True)
+    # ds = load_dataset("zh-plus/tiny-imagenet", split="valid", streaming=True)
     seen, images, labels = set(), [], []
     for s in ds:
         idx = s["label"]
@@ -106,16 +114,16 @@ def visualise_cutmix(n_examples=5, alpha=1.0):
 
     for i, (lam, (x1,y1,x2,y2)) in enumerate(zip(lam_out, boxes)):
         ca, cb = lbls_A[i], lbls_B[i]
-        axes[i,0].imshow(denorm(imgs_A[i])); axes[i,0].set_xlabel(ca, fontsize=8, color="navy")
-        axes[i,1].imshow(denorm(imgs_B[i])); axes[i,1].set_xlabel(cb, fontsize=8, color="darkred")
+        axes[i,0].imshow(denorm(imgs_A[i])); axes[i,0].set_xlabel("A", fontsize=8, color="navy")
+        axes[i,1].imshow(denorm(imgs_B[i])); axes[i,1].set_xlabel("B", fontsize=8, color="darkred")
         axes[i,1].add_patch(patches.Rectangle((x1,y1), x2-x1, y2-y1,
-                            lw=2, edgecolor="red", facecolor="none", linestyle="--"))
+            lw=2, edgecolor="red", facecolor="none", linestyle="--"))
         axes[i,2].imshow(denorm(mixed[i]))
         axes[i,2].add_patch(patches.Rectangle((x1,y1), x2-x1, y2-y1,
-                            lw=2, edgecolor="red", facecolor="none"))
-        axes[i,2].set_xlabel(f"{lam:.2f}·{ca} + {1-lam:.2f}·{cb}", fontsize=7)
+            lw=2, edgecolor="red", facecolor="none"))
+        axes[i,2].set_xlabel(f"{lam:.2f}·A + {1-lam:.2f}·B", fontsize=7)
         ax = axes[i,3]
-        ax.barh([ca, cb], [lam, 1-lam], color=["steelblue","tomato"])
+        ax.barh(["A", "B"], [lam, 1-lam], color=["steelblue","tomato"])
         ax.set_xlim(0,1); ax.axvline(0.5, color="grey", ls=":", lw=1)
         ax.set_xlabel("label weight", fontsize=8)
         for sp in ["top","right"]: ax.spines[sp].set_visible(False)
@@ -150,5 +158,7 @@ def visualise_alpha_effect(alpha_values=(0.2, 0.5, 1.0, 2.0), n_pairs=3):
 
 
 if __name__ == "__main__":
-    visualise_cutmix(n_examples=5, alpha=1.0)
+    login()
+    visualise_cutmix(n_examples=10, alpha=1.0)
     visualise_alpha_effect(alpha_values=(0.2, 0.5, 1.0, 2.0))
+    os._exit(0)

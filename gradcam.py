@@ -39,8 +39,11 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from datasets import load_dataset
 import ssl
+from huggingface_hub import login
+import os
 
-# Fix for macOS SSL certificate verification error when downloading MNIST
+
+# Fix for macOS SSL certificate verification error when downloading
 ssl._create_default_https_context = ssl._create_unverified_context
 
 
@@ -116,7 +119,8 @@ def overlay(img, heatmap, alpha=0.5):
     return (np.clip((1 - alpha) * img + alpha * rgb, 0, 1) * 255).astype(np.uint8)
 
 def get_diverse_samples(n: int = 8):
-    ds = load_dataset("zh-plus/tiny-imagenet", split="valid", streaming=True)
+    ds = load_dataset("ILSVRC/imagenet-1k", split="validation", streaming=True, trust_remote_code=True)
+    # ds = load_dataset("zh-plus/tiny-imagenet", split="valid", streaming=True)
     seen, images, labels = set(), [], []
     for sample in ds:
         label_idx  = sample["label"]
@@ -159,11 +163,13 @@ def demo_multiclass(n_images: int = 8):
         for ax in axes[i]:
             ax.axis("off")
 
-    fig.suptitle("GradCAM — ResNet-18 on tiny-imagenet (one image per class)",
+    fig.suptitle("GradCAM — ResNet-18 on imagenet (one image per class)",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
     plt.savefig("gradcam_multiclass.png", dpi=150, bbox_inches="tight")
 
 
 if __name__ == "__main__":
-    demo_multiclass(n_images=8)
+    login()
+    demo_multiclass(n_images=10)
+    os._exit(0)

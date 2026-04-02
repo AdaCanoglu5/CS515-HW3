@@ -7,7 +7,7 @@ def get_params():
     parser.add_argument("--mode",      choices=["train", "test", "both"], default="both")
     parser.add_argument("--dataset",   choices=["mnist", "cifar10", "names"], default="mnist")
     parser.add_argument("--model",     choices=["mlp", "cnn", "vgg", "resnet", "mobilenet", "rnn", "lstm"], default="mlp")
-    parser.add_argument("--epochs",    type=int,   default=50)
+    parser.add_argument("--epochs",    type=int,   default=25)
     parser.add_argument("--lr",        type=float, default=1e-3)
     parser.add_argument("--device",    type=str,   default="cpu")
     parser.add_argument("--batch_size",type=int,   default=64)

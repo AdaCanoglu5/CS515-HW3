@@ -103,6 +103,16 @@ if __name__ == "__main__":
         generator=torch.Generator(device=device).manual_seed(params["seed"])
     )
 
+    # -- Tutorial: inspect one sample before training ----------------------------
+    sample_label_t, sample_name_t, sample_label, sample_name = dataset[0]
+    print("\n--- Sample inspection ---")
+    print(f"  Name  : '{sample_name}'  →  label: '{sample_label}'")
+    print(f"  Label tensor : {sample_label_t}  (class index used by NLLLoss)")
+    print(f"  Name tensor shape: {sample_name_t.shape}  (seq_len={len(sample_name)}, batch=1, n_letters={N_LETTERS})")
+    print(f"  First character '{sample_name[0]}' one-hot:\n    {sample_name_t[0][0]}")
+    print("-------------------------\n")
+    # ---------------------------------------------------------------------------
+
     n_classes = len(dataset.labels_uniq)
     model = (CharRNN if params["model"] == "rnn" else CharLSTM)(N_LETTERS, params["hidden"], n_classes)
     print(model)
@@ -113,3 +123,18 @@ if __name__ == "__main__":
     print(f"Training done in {time.time()-t0:.1f}s")
 
     evaluate(model, test_set, dataset.labels_uniq)
+
+    # -- Tutorial: run the trained model on the same sample ---------------------
+    print("\n--- Model output for the same sample after training ---")
+    model.eval()
+    with torch.no_grad():
+        log_probs = model(sample_name_t)          # shape: (1, n_classes)
+        probs     = log_probs.exp()               # convert log-probs → probs
+        top3_probs, top3_idx = probs.topk(3, dim=1)
+        print(f"  Input name  : '{sample_name}'")
+        print(f"  True label  : '{sample_label}'")
+        print("  Top-3 predictions:")
+        for prob, idx in zip(top3_probs[0], top3_idx[0]):
+            lang = dataset.labels_uniq[idx.item()]
+            print(f"    {lang:<14} {prob.item():.1%}")
+    print("------------------------------------------------------")

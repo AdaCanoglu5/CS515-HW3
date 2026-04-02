@@ -4,7 +4,7 @@ import torch.nn as nn
 class CharRNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
-        self.rnn     = nn.RNN(input_size, hidden_size)
+        self.rnn     = nn.RNN(input_size, hidden_size, bidirectional=True)
         self.h2o     = nn.Linear(hidden_size, output_size)
         self.softmax = nn.LogSoftmax(dim=1)
 

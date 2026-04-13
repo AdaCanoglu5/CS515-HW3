@@ -1,0 +1,2 @@
+run_name,model_name,source_model,target_model,checkpoint_path,eval_type,corruption_name,severity,attack_type,attack_norm,epsilon,steps,num_samples,loss,clean_accuracy,adversarial_accuracy,feature_path,sample_path
+transfer_clean_teacher_to_clean_student,cnn,resnet,cnn,artifacts/checkpoints/student_distill_from_clean_teacher.pth,transfer,,,pgd,linf,0.01568627450980392,20,10000,1.134399,0.731100,0.655000,,artifacts/robustness/transfer_clean_teacher_to_clean_student_transfer_linf_samples.pt

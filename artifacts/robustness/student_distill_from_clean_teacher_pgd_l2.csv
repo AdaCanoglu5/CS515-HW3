@@ -1,0 +1,2 @@
+run_name,model_name,source_model,target_model,checkpoint_path,eval_type,corruption_name,severity,attack_type,attack_norm,epsilon,steps,num_samples,loss,clean_accuracy,adversarial_accuracy,feature_path,sample_path
+student_distill_from_clean_teacher,cnn,cnn,cnn,artifacts/checkpoints/student_distill_from_clean_teacher.pth,pgd,,,pgd,l2,0.25,20,10000,4.454296,0.731100,0.195000,,artifacts/robustness/student_distill_from_clean_teacher_pgd_l2_samples.pt

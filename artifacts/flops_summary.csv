@@ -1,0 +1,3 @@
+arch_name,input_res,flops,macs,params
+ResNetTeacher,3x32x32,1115564052,557782026,11173962
+SimpleCNNStudent,3x32x32,12553236,6276618,545098

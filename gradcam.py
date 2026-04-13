@@ -1,175 +1,191 @@
-"""
-GradCAM — Gradient-weighted Class Activation Mapping
-======================================================
-GradCAM answers the question: "Which parts of the image made the model
-predict class C?"
+"""Reusable Grad-CAM utility for exported clean/adversarial sample pairs."""
 
-Key idea
---------
-After a forward pass, we:
-  1. Pick a convolutional layer (usually the last one — it has the richest
-     spatial features while still being high-resolution enough to be useful).
-  2. Compute the gradient of the class score  y^c  w.r.t. every activation
-     map  A^k  in that layer.
-  3. Average those gradients spatially to get importance weights  α_k^c.
-  4. Take a weighted sum of the activation maps, then ReLU it.
+from __future__ import annotations
 
-     GradCAM(x) = ReLU( Σ_k  α_k^c · A^k )
+import argparse
+from pathlib import Path
 
-     The ReLU keeps only the activations that *increase* the class score
-     (negatively-contributing regions are ignored — they'd correspond to a
-     different class).
-
-  5. Resize the heatmap back to input resolution and overlay it.
-
-References
-----------
-Selvaraju et al., "Grad-CAM: Visual Explanations from Deep Networks via
-Gradient-based Localization," ICCV 2017.
-https://arxiv.org/abs/1610.02391
-"""
-
+import matplotlib.cm as cm
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn as nn
-import torchvision.models as models
-import torchvision.transforms as transforms
 from PIL import Image
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
-from datasets import load_dataset
-import ssl
-from huggingface_hub import login
-import os
+
+from models import build_model, resolve_last_conv_module
 
 
-# Fix for macOS SSL certificate verification error when downloading
-ssl._create_default_https_context = ssl._create_unverified_context
+def _load_checkpoint(model: nn.Module, checkpoint_path: str, device: torch.device) -> None:
+    checkpoint = torch.load(checkpoint_path, map_location=device)
+    state_dict = checkpoint["model_state_dict"] if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint else checkpoint
+    model.load_state_dict(state_dict)
 
 
-# ── GradCAM core ──────────────────────────────────────────────────────────────
+def _dataset_stats(dataset: str) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    if dataset == "mnist":
+        return (0.1307,), (0.3081,)
+    return (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)
+
+
+def denormalize(image: torch.Tensor, mean: tuple[float, ...], std: tuple[float, ...]) -> np.ndarray:
+    """Convert a normalized tensor into an ``H x W x C`` numpy image."""
+
+    image = image.detach().cpu()
+    mean_tensor = torch.tensor(mean).view(-1, 1, 1)
+    std_tensor = torch.tensor(std).view(-1, 1, 1)
+    image = image * std_tensor + mean_tensor
+    image = image.clamp(0.0, 1.0)
+    if image.size(0) == 1:
+        image = image.repeat(3, 1, 1)
+    return image.permute(1, 2, 0).numpy()
+
+
+def overlay(image: np.ndarray, heatmap: np.ndarray, alpha: float = 0.45) -> np.ndarray:
+    """Overlay a jet heatmap onto an RGB image."""
+
+    colorized = cm.get_cmap("jet")(heatmap)[..., :3]
+    return np.clip((1.0 - alpha) * image + alpha * colorized, 0.0, 1.0)
+
 
 class GradCAM:
-    """
-    Computes GradCAM heatmaps for a given model and target layer.
+    """Compute Grad-CAM heatmaps for a given model and convolutional layer."""
 
-    How the hooks work
-    ------------------
-    PyTorch's hook system lets us intercept:
-      • forward_hook       — captures activations A^k after the forward pass.
-      • full_backward_hook — captures gradients dY/dA^k after the backward pass.
+    def __init__(self, model: nn.Module, target_layer: nn.Module) -> None:
+        self.model = model
+        self.activations: torch.Tensor | None = None
+        self.gradients: torch.Tensor | None = None
+        self.forward_hook = target_layer.register_forward_hook(self._save_activations)
+        self.backward_hook = target_layer.register_full_backward_hook(self._save_gradients)
 
-    We register both on the target conv layer, then read them off after calling
-    loss.backward() to compute the weighted heatmap.
-    """
+    def _save_activations(self, module, inputs, output) -> None:
+        del module, inputs
+        self.activations = output.detach()
 
-    def __init__(self, model: nn.Module, target_layer: nn.Module):
-        self.model       = model
-        self.activations = None
-        self.gradients   = None
-        self._fwd_hook   = target_layer.register_forward_hook(
-            lambda m, i, o: setattr(self, "activations", o.detach()))
-        self._bwd_hook   = target_layer.register_full_backward_hook(
-            lambda m, gi, go: setattr(self, "gradients", go[0].detach()))
+    def _save_gradients(self, module, grad_input, grad_output) -> None:
+        del module, grad_input
+        self.gradients = grad_output[0].detach()
 
-    def __call__(self, x: torch.Tensor, class_idx: int = None):
-        self.model.eval()
-        self.model.zero_grad()
-
-        logits = self.model(x)                                   # (1, num_classes)
+    def __call__(self, inputs: torch.Tensor, class_idx: int | None = None) -> tuple[np.ndarray, int]:
+        self.model.zero_grad(set_to_none=True)
+        logits = self.model(inputs)
         if class_idx is None:
-            class_idx = logits.argmax(dim=1).item()
-        logits[0, class_idx].backward()
+            class_idx = int(logits.argmax(dim=1).item())
+        logits[:, class_idx].sum().backward()
 
-        # alpha_k^c = global-average-pool of gradients -> weighted sum -> ReLU
-        weights  = self.gradients.mean(dim=(2, 3), keepdim=True) # (1, K, 1, 1) ex. for resnet18 layer4[-1] K=512 so weights shape is (1, 512, 1, 1)
-        cam      = torch.relu((weights * self.activations).sum(dim=1, keepdim=True)) # (1, 1, H', W') ex. for resnet18 layer4[-1] H'=W'=7 so cam shape is (1, 1, 7, 7)
+        if self.activations is None or self.gradients is None:
+            raise RuntimeError("Grad-CAM hooks did not capture activations/gradients.")
 
-        # Normalise and upsample to input resolution
-        cam = cam.squeeze().cpu().numpy()
-        cam = (cam - cam.min()) / (cam.max() + 1e-8)
-        h, w    = x.shape[2], x.shape[3]
-        heatmap = np.array(Image.fromarray(np.uint8(cam * 255)).resize((w, h), Image.BILINEAR)) / 255.0 # (H, W) ex. for resnet18 layer4[-1] (224, 224)
-        return heatmap, class_idx
+        weights = self.gradients.mean(dim=(2, 3), keepdim=True)
+        cam = torch.relu((weights * self.activations).sum(dim=1, keepdim=True))
+        cam = cam.squeeze().detach().cpu().numpy()
+        cam = (cam - cam.min()) / (cam.max() - cam.min() + 1e-8)
 
-    def remove_hooks(self):
-        self._fwd_hook.remove()
-        self._bwd_hook.remove()
+        height, width = inputs.shape[2], inputs.shape[3]
+        heatmap = Image.fromarray(np.uint8(cam * 255)).resize((width, height), Image.BILINEAR)
+        return np.asarray(heatmap, dtype=np.float32) / 255.0, class_idx
 
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-IMAGENET_MEAN = (0.485, 0.456, 0.406)
-IMAGENET_STD  = (0.229, 0.224, 0.225)
-
-transform = transforms.Compose([
-    transforms.Resize(256),
-    transforms.CenterCrop(224),
-    transforms.ToTensor(),
-    transforms.Normalize(IMAGENET_MEAN, IMAGENET_STD),
-])
-
-def denormalize(t):
-    t = t.clone().squeeze(0) * torch.tensor(IMAGENET_STD).view(3,1,1) \
-        + torch.tensor(IMAGENET_MEAN).view(3,1,1)
-    return np.clip(t.permute(1,2,0).numpy(), 0, 1)
-
-def overlay(img, heatmap, alpha=0.5):
-    rgb = cm.get_cmap("jet")(heatmap)[:, :, :3]
-    return (np.clip((1 - alpha) * img + alpha * rgb, 0, 1) * 255).astype(np.uint8)
-
-def get_diverse_samples(n: int = 8):
-    ds = load_dataset("ILSVRC/imagenet-1k", split="validation", streaming=True, trust_remote_code=True)
-    # ds = load_dataset("zh-plus/tiny-imagenet", split="valid", streaming=True)
-    seen, images, labels = set(), [], []
-    for sample in ds:
-        label_idx  = sample["label"]
-        label_name = ds.features["label"].int2str(label_idx)
-        if label_idx in seen:
-            continue
-        seen.add(label_idx)
-        images.append(transform(sample["image"].convert("RGB")))
-        labels.append(label_name)
-        if len(images) == n:
-            break
-    return torch.stack(images), labels
+    def close(self) -> None:
+        self.forward_hook.remove()
+        self.backward_hook.remove()
 
 
-# ── Demo ──────────────────────────────────────────────────────────────────────
+def build_argparser() -> argparse.ArgumentParser:
+    """Create a small dedicated CLI for Grad-CAM rendering."""
 
-def demo_multiclass(n_images: int = 8):
-    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    parser = argparse.ArgumentParser(description="Generate Grad-CAM figures for saved PGD samples.")
+    parser.add_argument("--model", choices=["mlp", "cnn", "vgg", "resnet", "mobilenet"], default="resnet")
+    parser.add_argument("--dataset", choices=["mnist", "cifar10"], default="cifar10")
+    parser.add_argument("--checkpoint_path", type=str, required=True)
+    parser.add_argument("--samples_path", type=str, required=True)
+    parser.add_argument("--output_dir", type=str, default="artifacts/figures")
+    parser.add_argument("--device", type=str, default="cpu")
+    parser.add_argument("--run_name", type=str, default="")
+    parser.add_argument("--num_classes", type=int, default=10)
+    parser.add_argument("--sample_limit", type=int, default=4)
+    parser.add_argument(
+        "--resnet_layers",
+        type=int,
+        nargs=4,
+        default=[2, 2, 2, 2],
+        metavar=("L1", "L2", "L3", "L4"),
+    )
+    parser.add_argument("--vgg_depth", choices=["11", "13", "16", "19"], default="16")
+    return parser
+
+
+def render_gradcam_panels(args: argparse.Namespace) -> list[Path]:
+    """Load saved samples, generate Grad-CAM panels, and write PNG outputs."""
+
+    device = torch.device(args.device if args.device != "auto" else "cuda" if torch.cuda.is_available() else "cpu")
+    params = {
+        "model": args.model,
+        "dataset": args.dataset,
+        "num_classes": args.num_classes,
+        "feature_size": 3072 if args.dataset == "cifar10" else 784,
+        "hidden_sizes": [512, 256, 128],
+        "dropout": 0.3,
+        "vgg_depth": args.vgg_depth,
+        "resnet_layers": args.resnet_layers,
+    }
+    model = build_model(params).to(device)
+    _load_checkpoint(model, args.checkpoint_path, device)
     model.eval()
 
-    images, label_names = get_diverse_samples(n_images)
+    target_layer = resolve_last_conv_module(model)
+    gradcam = GradCAM(model, target_layer)
+    mean, std = _dataset_stats(args.dataset)
+    samples = torch.load(args.samples_path, map_location="cpu")
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    fig, axes = plt.subplots(n_images, 3, figsize=(11, 3.5 * n_images))
-    for col, title in enumerate(["Original", "Heatmap (layer4)", "Overlay"]):
-        axes[0, col].set_title(title, fontsize=11, fontweight="bold")
+    output_paths: list[Path] = []
+    for index, sample in enumerate(samples[: args.sample_limit]):
+        clean_tensor = sample["clean_image"].unsqueeze(0).to(device)
+        adv_tensor = sample["adv_image"].unsqueeze(0).to(device)
 
-    for i in range(n_images):
-        x = images[i].unsqueeze(0)
+        clean_heatmap, _ = gradcam(clean_tensor, class_idx=sample["clean_prediction"])
+        adv_heatmap, _ = gradcam(adv_tensor, class_idx=sample["adv_prediction"])
 
-        cam = GradCAM(model, target_layer=model.layer4[-1])
-        heatmap, pred_class = cam(x)
-        cam.remove_hooks()
+        clean_image = denormalize(clean_tensor.squeeze(0), mean, std)
+        adv_image = denormalize(adv_tensor.squeeze(0), mean, std)
 
-        img_np = denormalize(x)
-        axes[i, 0].imshow(img_np)
-        axes[i, 0].set_ylabel(f"True: {label_names[i]}\nPred idx: {pred_class}",
-                               fontsize=8, rotation=0, labelpad=90, va="center")
-        axes[i, 1].imshow(heatmap, cmap="jet")
-        axes[i, 2].imshow(overlay(img_np, heatmap))
-        for ax in axes[i]:
-            ax.axis("off")
+        fig, axes = plt.subplots(2, 3, figsize=(10, 6))
+        axes[0, 0].imshow(clean_image)
+        axes[0, 0].set_title(f"Clean | y={sample['true_label']} pred={sample['clean_prediction']}")
+        axes[0, 1].imshow(clean_heatmap, cmap="jet")
+        axes[0, 1].set_title("Clean Heatmap")
+        axes[0, 2].imshow(overlay(clean_image, clean_heatmap))
+        axes[0, 2].set_title("Clean Overlay")
 
-    fig.suptitle("GradCAM — ResNet-18 on imagenet (one image per class)",
-                 fontsize=13, fontweight="bold")
-    plt.tight_layout()
-    plt.savefig("gradcam_multiclass.png", dpi=150, bbox_inches="tight")
+        axes[1, 0].imshow(adv_image)
+        axes[1, 0].set_title(f"Adversarial | pred={sample['adv_prediction']}")
+        axes[1, 1].imshow(adv_heatmap, cmap="jet")
+        axes[1, 1].set_title("Adversarial Heatmap")
+        axes[1, 2].imshow(overlay(adv_image, adv_heatmap))
+        axes[1, 2].set_title("Adversarial Overlay")
+
+        for axis in axes.ravel():
+            axis.axis("off")
+
+        plt.tight_layout()
+        run_name = args.run_name or sample.get("run_name", Path(args.checkpoint_path).stem)
+        output_path = output_dir / f"{run_name}_gradcam_{index:02d}.png"
+        fig.savefig(output_path, dpi=160, bbox_inches="tight")
+        plt.close(fig)
+        output_paths.append(output_path)
+
+    gradcam.close()
+    return output_paths
+
+
+def main() -> None:
+    """CLI entry point."""
+
+    args = build_argparser().parse_args()
+    output_paths = render_gradcam_panels(args)
+    for path in output_paths:
+        print(f"Saved {path}")
 
 
 if __name__ == "__main__":
-    login()
-    demo_multiclass(n_images=10)
-    os._exit(0)
+    main()

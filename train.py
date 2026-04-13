@@ -30,6 +30,8 @@ RUN_CSV_COLUMNS = [
     "model",
     "dataset",
     "train_mode",
+    "pretrained",
+    "transfer_mode",
     "teacher_run",
     "augmix_enabled",
     "label_smoothing",
@@ -42,6 +44,8 @@ SUMMARY_COLUMNS = [
     "model",
     "dataset",
     "train_mode",
+    "pretrained",
+    "transfer_mode",
     "teacher_run",
     "checkpoint_path",
     "augmix_enabled",
@@ -94,10 +98,18 @@ def get_teacher_run_name(params: ExperimentConfig) -> str:
     return Path(teacher_checkpoint).stem if teacher_checkpoint else ""
 
 
-def get_transforms(params: ExperimentConfig, train: bool = True) -> transforms.Compose:
-    """Build standard dataset transforms used outside of AugMix."""
+def _resolve_mean_std(params: ExperimentConfig) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Match HW2 normalization logic for transfer-learning runs."""
 
-    mean, std = params["mean"], params["std"]
+    if params["transfer_mode"] == "resize_freeze":
+        return params["imagenet_mean"], params["imagenet_std"]
+    return params["mean"], params["std"]
+
+
+def get_transforms(params: ExperimentConfig, train: bool = True) -> transforms.Compose:
+    """Build dataset transforms, preserving the HW2 transfer branches."""
+
+    mean, std = _resolve_mean_std(params)
 
     if params["dataset"] == "mnist":
         return transforms.Compose(
@@ -106,6 +118,18 @@ def get_transforms(params: ExperimentConfig, train: bool = True) -> transforms.C
                 transforms.Normalize(mean, std),
             ]
         )
+
+    if params["transfer_mode"] == "resize_freeze":
+        steps: list[Any] = [transforms.Resize((params["input_size"], params["input_size"]))]
+        if train:
+            steps.append(transforms.RandomHorizontalFlip())
+        steps.extend(
+            [
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ]
+        )
+        return transforms.Compose(steps)
 
     if train:
         return transforms.Compose(
@@ -126,6 +150,13 @@ def get_transforms(params: ExperimentConfig, train: bool = True) -> transforms.C
 
 
 def _get_cifar_pil_augment(params: ExperimentConfig) -> transforms.Compose:
+    if params["transfer_mode"] == "resize_freeze":
+        return transforms.Compose(
+            [
+                transforms.Resize((params["input_size"], params["input_size"])),
+                transforms.RandomHorizontalFlip(),
+            ]
+        )
     return transforms.Compose(
         [
             transforms.RandomCrop(params["input_size"], padding=4),
@@ -265,6 +296,8 @@ def build_log_row(
         "model": params["model"],
         "dataset": params["dataset"],
         "train_mode": params["train_mode"],
+        "pretrained": params["pretrained"],
+        "transfer_mode": params["transfer_mode"],
         "teacher_run": teacher_run,
         "augmix_enabled": params["augmix_enabled"],
         "label_smoothing": params["label_smoothing"],
@@ -280,7 +313,13 @@ def load_teacher_model(params: ExperimentConfig, device: torch.device) -> nn.Mod
     if not teacher_checkpoint:
         raise ValueError("A teacher checkpoint is required when train_mode=distill.")
 
-    teacher = build_model(params, model_name=params["teacher_model"]).to(device)
+    teacher = build_model(
+        params,
+        model_name=params["teacher_model"],
+        pretrained=params["teacher_pretrained"],
+        transfer_mode=params["teacher_transfer_mode"],
+        freeze_backbone=params["teacher_freeze_backbone"],
+    ).to(device)
     checkpoint = torch.load(teacher_checkpoint, map_location=device)
     state_dict = checkpoint["model_state_dict"] if isinstance(checkpoint, dict) and "model_state_dict" in checkpoint else checkpoint
     teacher.load_state_dict(state_dict)
@@ -475,6 +514,8 @@ def run_training(
         "model": params["model"],
         "dataset": params["dataset"],
         "train_mode": params["train_mode"],
+        "pretrained": params["pretrained"],
+        "transfer_mode": params["transfer_mode"],
         "teacher_run": get_teacher_run_name(params),
         "checkpoint_path": params["save_path"],
         "augmix_enabled": params["augmix_enabled"],

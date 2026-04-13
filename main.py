@@ -45,7 +45,11 @@ def write_flops_summary(params: ExperimentConfig, device: torch.device) -> Path:
 
     rows: list[dict[str, object]] = []
     models_to_profile = [
-        ("ResNetTeacher", ResNet(BasicBlock, params["resnet_layers"], num_classes=params["num_classes"]), (3, 32, 32)),
+        (
+            "ResNetTeacher",
+            build_model(params, model_name="resnet", pretrained=True, transfer_mode="modify_finetune", freeze_backbone=False),
+            (3, 32, 32),
+        ),
         ("SimpleCNNStudent", SimpleCNN(num_classes=params["num_classes"]), (3, 32, 32)),
     ]
 
@@ -99,8 +103,16 @@ def main() -> None:
     set_seed(params["seed"])
     device = _get_runtime_device(params)
 
-    active_model_name = params["target_model"] if params["eval_mode"] == "transfer" else params["model"]
-    model = build_model(params, model_name=active_model_name).to(device)
+    if params["eval_mode"] == "transfer":
+        model = build_model(
+            params,
+            model_name=params["target_model"],
+            pretrained=params["target_pretrained"],
+            transfer_mode=params["target_transfer_mode"],
+            freeze_backbone=params["target_freeze_backbone"],
+        ).to(device)
+    else:
+        model = build_model(params).to(device)
 
     print(f"Run: {params['run_name']}")
     print(f"Mode: {params['mode']} | Train mode: {params['train_mode']} | Eval mode: {params['eval_mode']}")

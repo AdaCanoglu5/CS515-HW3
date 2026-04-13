@@ -18,10 +18,18 @@ mkdir -p \
   "${OUTPUT_DIR}/figures" \
   "${OUTPUT_DIR}/configs"
 
+if [ ! -f "${CIFAR10C_DIR}/labels.npy" ]; then
+  echo "CIFAR-10-C was not found at ${CIFAR10C_DIR}."
+  echo "Download and extract it before running this script."
+  exit 1
+fi
+
 python3 main.py \
   --mode both \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --train_mode clean_finetune \
   --eval_mode clean \
   --epochs "${EPOCHS}" \
@@ -35,6 +43,8 @@ python3 main.py \
   --mode both \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --train_mode augmix_finetune \
   --eval_mode clean \
   --epochs "${EPOCHS}" \
@@ -48,6 +58,8 @@ python3 main.py \
   --mode test \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --eval_mode cifar10c \
   --batch_size "${BATCH_SIZE}" \
   --device "${DEVICE}" \
@@ -61,6 +73,8 @@ python3 main.py \
   --mode test \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --eval_mode cifar10c \
   --batch_size "${BATCH_SIZE}" \
   --device "${DEVICE}" \
@@ -74,6 +88,8 @@ python3 main.py \
   --mode test \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --eval_mode pgd \
   --attack_norm linf \
   --attack_epsilon 4/255 \
@@ -91,6 +107,8 @@ python3 main.py \
   --mode test \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --eval_mode pgd \
   --attack_norm l2 \
   --attack_epsilon 0.25 \
@@ -107,6 +125,8 @@ python3 main.py \
   --mode test \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --eval_mode pgd \
   --attack_norm linf \
   --attack_epsilon 4/255 \
@@ -124,6 +144,8 @@ python3 main.py \
   --mode test \
   --dataset cifar10 \
   --model resnet \
+  --pretrained true \
+  --transfer_mode modify_finetune \
   --eval_mode pgd \
   --attack_norm l2 \
   --attack_epsilon 0.25 \
@@ -141,6 +163,8 @@ python3 main.py \
   --dataset cifar10 \
   --model cnn \
   --teacher_model resnet \
+  --teacher_pretrained true \
+  --teacher_transfer_mode modify_finetune \
   --train_mode distill \
   --eval_mode clean \
   --epochs "${EPOCHS}" \
@@ -156,6 +180,8 @@ python3 main.py \
   --dataset cifar10 \
   --model cnn \
   --teacher_model resnet \
+  --teacher_pretrained true \
+  --teacher_transfer_mode modify_finetune \
   --train_mode distill \
   --eval_mode clean \
   --epochs "${EPOCHS}" \
@@ -264,6 +290,8 @@ python3 main.py \
   --model cnn \
   --target_model cnn \
   --source_model resnet \
+  --source_pretrained true \
+  --source_transfer_mode modify_finetune \
   --eval_mode transfer \
   --attack_norm linf \
   --attack_epsilon 4/255 \
@@ -283,6 +311,8 @@ python3 main.py \
   --model cnn \
   --target_model cnn \
   --source_model resnet \
+  --source_pretrained true \
+  --source_transfer_mode modify_finetune \
   --eval_mode transfer \
   --attack_norm linf \
   --attack_epsilon 4/255 \
@@ -300,6 +330,8 @@ if [ -f "${OUTPUT_DIR}/robustness/teacher_clean_resnet_pgd_linf_samples.pt" ]; t
   python3 gradcam.py \
     --model resnet \
     --dataset cifar10 \
+    --pretrained \
+    --transfer_mode modify_finetune \
     --checkpoint_path "${OUTPUT_DIR}/checkpoints/teacher_clean_resnet.pth" \
     --samples_path "${OUTPUT_DIR}/robustness/teacher_clean_resnet_pgd_linf_samples.pt" \
     --output_dir "${OUTPUT_DIR}/figures" \
@@ -311,6 +343,8 @@ if [ -f "${OUTPUT_DIR}/robustness/teacher_augmix_resnet_pgd_linf_samples.pt" ]; 
   python3 gradcam.py \
     --model resnet \
     --dataset cifar10 \
+    --pretrained \
+    --transfer_mode modify_finetune \
     --checkpoint_path "${OUTPUT_DIR}/checkpoints/teacher_augmix_resnet.pth" \
     --samples_path "${OUTPUT_DIR}/robustness/teacher_augmix_resnet_pgd_linf_samples.pt" \
     --output_dir "${OUTPUT_DIR}/figures" \

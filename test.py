@@ -178,6 +178,8 @@ def run_clean_evaluation(
             "model": params["model"],
             "dataset": params["dataset"],
             "train_mode": params["train_mode"],
+            "pretrained": params["pretrained"],
+            "transfer_mode": params["transfer_mode"],
             "teacher_run": get_teacher_run_name(params),
             "checkpoint_path": _resolve_checkpoint_path(params),
             "augmix_enabled": params["augmix_enabled"],
@@ -473,7 +475,13 @@ def run_transfer_evaluation(target_model: nn.Module, params: ExperimentConfig, d
     if not target_checkpoint:
         raise ValueError("Transfer evaluation requires a target checkpoint.")
 
-    source_model = build_model(params, model_name=params["source_model"]).to(device)
+    source_model = build_model(
+        params,
+        model_name=params["source_model"],
+        pretrained=params["source_pretrained"],
+        transfer_mode=params["source_transfer_mode"],
+        freeze_backbone=params["source_freeze_backbone"],
+    ).to(device)
     _load_state_dict(source_model, source_checkpoint, device)
     _load_state_dict(target_model, target_checkpoint, device)
 

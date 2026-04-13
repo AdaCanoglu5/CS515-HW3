@@ -100,6 +100,13 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--output_dir", type=str, default="artifacts/figures")
     parser.add_argument("--device", type=str, default="cpu")
     parser.add_argument("--run_name", type=str, default="")
+    parser.add_argument("--pretrained", action="store_true")
+    parser.add_argument(
+        "--transfer_mode",
+        choices=["none", "resize_freeze", "modify_finetune"],
+        default="none",
+    )
+    parser.add_argument("--freeze_backbone", action="store_true")
     parser.add_argument("--num_classes", type=int, default=10)
     parser.add_argument("--sample_limit", type=int, default=4)
     parser.add_argument(
@@ -126,8 +133,16 @@ def render_gradcam_panels(args: argparse.Namespace) -> list[Path]:
         "dropout": 0.3,
         "vgg_depth": args.vgg_depth,
         "resnet_layers": args.resnet_layers,
+        "pretrained": args.pretrained,
+        "transfer_mode": args.transfer_mode,
+        "freeze_backbone": args.freeze_backbone,
     }
-    model = build_model(params).to(device)
+    model = build_model(
+        params,
+        pretrained=args.pretrained,
+        transfer_mode=args.transfer_mode,
+        freeze_backbone=args.freeze_backbone,
+    ).to(device)
     _load_checkpoint(model, args.checkpoint_path, device)
     model.eval()
 

@@ -19,6 +19,13 @@ Standard experiment family:
 - `student_distill_from_clean_teacher`
 - `student_distill_from_augmix_teacher`
 
+The teacher runs follow the HW2 `transfer_modify_finetune` procedure:
+
+- pretrained `ResNet-18`
+- modified first convolution for CIFAR-10
+- removed max-pooling
+- full fine-tuning on CIFAR-10
+
 Artifacts are written under `artifacts/`:
 
 - `artifacts/checkpoints/`
@@ -31,9 +38,9 @@ Artifacts are written under `artifacts/`:
 Example usage:
 
 ```bash
-python3 main.py --mode both --dataset cifar10 --model resnet --train_mode clean_finetune --eval_mode clean --run_name teacher_clean_resnet
-python3 main.py --mode test --dataset cifar10 --model resnet --eval_mode pgd --attack_norm linf --attack_epsilon 4/255 --attack_steps 20 --checkpoint_path artifacts/checkpoints/teacher_clean_resnet.pth --run_name teacher_clean_resnet
-python3 gradcam.py --model resnet --dataset cifar10 --checkpoint_path artifacts/checkpoints/teacher_clean_resnet.pth --samples_path artifacts/robustness/teacher_clean_resnet_pgd_linf_samples.pt
+python3 main.py --mode both --dataset cifar10 --model resnet --pretrained true --transfer_mode modify_finetune --train_mode clean_finetune --eval_mode clean --run_name teacher_clean_resnet
+python3 main.py --mode test --dataset cifar10 --model resnet --pretrained true --transfer_mode modify_finetune --eval_mode pgd --attack_norm linf --attack_epsilon 4/255 --attack_steps 20 --checkpoint_path artifacts/checkpoints/teacher_clean_resnet.pth --run_name teacher_clean_resnet
+python3 gradcam.py --model resnet --dataset cifar10 --pretrained --transfer_mode modify_finetune --checkpoint_path artifacts/checkpoints/teacher_clean_resnet.pth --samples_path artifacts/robustness/teacher_clean_resnet_pgd_linf_samples.pt
 ```
 
 For the full pipeline, run:

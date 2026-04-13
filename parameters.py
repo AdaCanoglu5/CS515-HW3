@@ -40,6 +40,8 @@ class ExperimentConfig:
     num_workers: int
     mean: tuple[float, ...]
     std: tuple[float, ...]
+    imagenet_mean: tuple[float, ...]
+    imagenet_std: tuple[float, ...]
     model: str
     source_model: str
     target_model: str
@@ -61,6 +63,18 @@ class ExperimentConfig:
     mode: str = "both"
     train_mode: str = "clean_finetune"
     eval_mode: str = "clean"
+    pretrained: bool = False
+    transfer_mode: str = "none"
+    freeze_backbone: bool = False
+    teacher_pretrained: bool = False
+    teacher_transfer_mode: str = "none"
+    teacher_freeze_backbone: bool = False
+    source_pretrained: bool = False
+    source_transfer_mode: str = "none"
+    source_freeze_backbone: bool = False
+    target_pretrained: bool = False
+    target_transfer_mode: str = "none"
+    target_freeze_backbone: bool = False
     attack_type: str = "pgd"
     attack_norm: str = "linf"
     attack_epsilon: float = 4.0 / 255.0
@@ -120,8 +134,8 @@ def _default_run_name(args: argparse.Namespace) -> str:
             teacher_tag = Path(args.teacher_checkpoint).stem if args.teacher_checkpoint else args.teacher_model
             return f"{args.model}_distill_from_{teacher_tag or 'teacher'}"
         if args.train_mode == "augmix_finetune":
-            return f"{args.model}_augmix_teacher"
-        return f"{args.model}_clean_teacher"
+            return f"{args.model}_{args.transfer_mode}_augmix_teacher"
+        return f"{args.model}_{args.transfer_mode}_clean_teacher"
 
     if args.eval_mode == "transfer":
         source_tag = Path(args.source_checkpoint).stem if args.source_checkpoint else args.source_model
@@ -132,6 +146,22 @@ def _default_run_name(args: argparse.Namespace) -> str:
     if args.eval_mode in {"pgd", "transfer"}:
         suffix = f"{suffix}_{args.attack_norm}"
     return f"{args.model}_{suffix}"
+
+
+def _resolve_dataset_settings(args: argparse.Namespace) -> tuple[int, int, tuple[float, ...], tuple[float, ...], int]:
+    if args.dataset == "mnist":
+        return 784, 28, (0.1307,), (0.3081,), 10
+    return 3072, 32, (0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010), 10
+
+
+def _apply_transfer_mode(args: argparse.Namespace, input_size: int) -> int:
+    if args.transfer_mode == "resize_freeze":
+        args.pretrained = True
+        return 224
+    if args.transfer_mode == "modify_finetune":
+        args.pretrained = True
+        return 32
+    return input_size
 
 
 def get_params() -> ExperimentConfig:
@@ -146,6 +176,34 @@ def get_params() -> ExperimentConfig:
     parser.add_argument("--target_model", choices=["", "mlp", "cnn", "vgg", "resnet", "mobilenet"], default="")
     parser.add_argument("--teacher_model", choices=["mlp", "cnn", "vgg", "resnet", "mobilenet"], default="resnet")
     parser.add_argument("--student_model", choices=["mlp", "cnn", "vgg", "resnet", "mobilenet"], default="cnn")
+    parser.add_argument("--pretrained", type=_str2bool, default=False)
+    parser.add_argument("--teacher_pretrained", type=_str2bool, default=False)
+    parser.add_argument("--source_pretrained", type=_str2bool, default=False)
+    parser.add_argument("--target_pretrained", type=_str2bool, default=False)
+    parser.add_argument(
+        "--transfer_mode",
+        choices=["none", "resize_freeze", "modify_finetune"],
+        default="none",
+    )
+    parser.add_argument(
+        "--teacher_transfer_mode",
+        choices=["none", "resize_freeze", "modify_finetune"],
+        default="none",
+    )
+    parser.add_argument(
+        "--source_transfer_mode",
+        choices=["none", "resize_freeze", "modify_finetune"],
+        default="none",
+    )
+    parser.add_argument(
+        "--target_transfer_mode",
+        choices=["none", "resize_freeze", "modify_finetune"],
+        default="none",
+    )
+    parser.add_argument("--freeze_backbone", type=_str2bool, default=False)
+    parser.add_argument("--teacher_freeze_backbone", type=_str2bool, default=False)
+    parser.add_argument("--source_freeze_backbone", type=_str2bool, default=False)
+    parser.add_argument("--target_freeze_backbone", type=_str2bool, default=False)
     parser.add_argument(
         "--train_mode",
         choices=["clean_finetune", "augmix_finetune", "distill"],
@@ -176,7 +234,6 @@ def get_params() -> ExperimentConfig:
         nargs=4,
         default=[2, 2, 2, 2],
         metavar=("L1", "L2", "L3", "L4"),
-        help="Number of blocks per ResNet layer (default: 2 2 2 2 = ResNet-18).",
     )
 
     parser.add_argument("--teacher_checkpoint", type=str, default="")
@@ -205,27 +262,12 @@ def get_params() -> ExperimentConfig:
     parser.add_argument("--feature_export_limit", type=int, default=0)
     parser.add_argument("--gradcam_sample_count", type=int, default=8)
     parser.add_argument("--output_dir", type=str, default="artifacts")
-    parser.add_argument(
-        "--cifar10c_severities",
-        type=int,
-        nargs="*",
-        default=[1, 2, 3, 4, 5],
-        help="CIFAR-10-C severities to evaluate.",
-    )
+    parser.add_argument("--cifar10c_severities", type=int, nargs="*", default=[1, 2, 3, 4, 5])
 
     args = parser.parse_args()
 
-    if args.dataset == "mnist":
-        feature_size = 784
-        input_size = 28
-        mean, std = (0.1307,), (0.3081,)
-        num_classes = 10
-    else:
-        feature_size = 3072
-        input_size = 32
-        mean = (0.4914, 0.4822, 0.4465)
-        std = (0.2023, 0.1994, 0.2010)
-        num_classes = 10
+    feature_size, input_size, mean, std, num_classes = _resolve_dataset_settings(args)
+    input_size = _apply_transfer_mode(args, input_size)
 
     if args.train_mode == "augmix_finetune":
         args.augmix_enabled = True
@@ -249,6 +291,8 @@ def get_params() -> ExperimentConfig:
         num_workers=args.num_workers,
         mean=mean,
         std=std,
+        imagenet_mean=(0.485, 0.456, 0.406),
+        imagenet_std=(0.229, 0.224, 0.225),
         model=args.model,
         source_model=source_model,
         target_model=target_model,
@@ -270,6 +314,18 @@ def get_params() -> ExperimentConfig:
         mode=args.mode,
         train_mode=args.train_mode,
         eval_mode=args.eval_mode,
+        pretrained=args.pretrained,
+        transfer_mode=args.transfer_mode,
+        freeze_backbone=args.freeze_backbone,
+        teacher_pretrained=args.teacher_pretrained,
+        teacher_transfer_mode=args.teacher_transfer_mode,
+        teacher_freeze_backbone=args.teacher_freeze_backbone,
+        source_pretrained=args.source_pretrained,
+        source_transfer_mode=args.source_transfer_mode,
+        source_freeze_backbone=args.source_freeze_backbone,
+        target_pretrained=args.target_pretrained,
+        target_transfer_mode=args.target_transfer_mode,
+        target_freeze_backbone=args.target_freeze_backbone,
         attack_type=args.attack_type,
         attack_norm=args.attack_norm,
         attack_epsilon=args.attack_epsilon,

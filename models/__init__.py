@@ -8,17 +8,36 @@ import torch.nn as nn
 
 from .CNN import MNIST_CNN, SimpleCNN
 from .MLP import MLP
+from .pretrained_resnet import build_pretrained_resnet18
 from .ResNet import BasicBlock, ResNet
 from .VGG import VGG
 from .mobilenet import MobileNetV2
 
 
-def build_model(params: Mapping[str, object], model_name: str | None = None) -> nn.Module:
+def build_model(
+    params: Mapping[str, object],
+    model_name: str | None = None,
+    pretrained: bool | None = None,
+    transfer_mode: str | None = None,
+    freeze_backbone: bool | None = None,
+) -> nn.Module:
     """Build a model from the shared config."""
 
     name = model_name or str(params["model"])
     dataset = str(params["dataset"])
     num_classes = int(params["num_classes"])
+    use_pretrained = bool(params["pretrained"]) if pretrained is None else pretrained
+    resolved_transfer_mode = str(params["transfer_mode"]) if transfer_mode is None else transfer_mode
+    resolved_freeze_backbone = bool(params["freeze_backbone"]) if freeze_backbone is None else freeze_backbone
+
+    if use_pretrained:
+        if dataset != "cifar10" or name != "resnet":
+            raise ValueError("Pretrained transfer learning is only supported for CIFAR-10 ResNet runs.")
+        return build_pretrained_resnet18(
+            num_classes=num_classes,
+            transfer_mode=resolved_transfer_mode,
+            freeze_backbone=resolved_freeze_backbone,
+        )
 
     if name == "mlp":
         return MLP(
